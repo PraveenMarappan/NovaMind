@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Brain, LogOut, MessageSquare, FileText, Heart, Mail } from "lucide-react";
+import { Brain, LogOut, MessageSquare, FileText, Heart, Mail, Reply } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import AIChat from "@/components/AIChat";
 import {
@@ -50,6 +50,9 @@ const StudentDashboard = () => {
   const [showResponsesDialog, setShowResponsesDialog] = useState(false);
   const [responses, setResponses] = useState<CounselorResponse[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [replyingToMessageId, setReplyingToMessageId] = useState<string | null>(null);
+  const [studentReplyText, setStudentReplyText] = useState("");
+  const [sendingStudentReply, setSendingStudentReply] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -180,6 +183,43 @@ const StudentDashboard = () => {
     
     setReport("");
     setLoading(false);
+  };
+
+  const handleSendStudentReply = async (reportId: string, responseId: string) => {
+    if (!user || !studentReplyText.trim()) return;
+    
+    setSendingStudentReply(true);
+    const payload = JSON.stringify({
+      type: "student_reply",
+      reportId: reportId,
+      responseId: responseId,
+      text: studentReplyText
+    });
+
+    const { error } = await supabase
+      .from("reports")
+      .insert({
+        user_id: user.id,
+        content: payload,
+        status: "student_reply",
+        priority: "normal"
+      });
+
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to send reply.",
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Reply sent",
+        description: "Your reply has been sent to the counselor.",
+      });
+      setReplyingToMessageId(null);
+      setStudentReplyText("");
+    }
+    setSendingStudentReply(false);
   };
 
   const handleMoodSubmit = async () => {
@@ -425,7 +465,18 @@ const StudentDashboard = () => {
                 </p>
               </div>
             ) : (
-              responses.map((response) => (
+              responses.map((response) => {
+                let messageText = response.message;
+                let linkedReportId = "legacy";
+                try {
+                  const parsed = JSON.parse(response.message);
+                  if (parsed && typeof parsed === 'object' && parsed.text && parsed.reportId) {
+                    messageText = parsed.text;
+                    linkedReportId = parsed.reportId;
+                  }
+                } catch(e) {}
+
+                return (
                 <div
                   key={response.id}
                   className={`p-4 rounded-lg border-2 transition-all ${
@@ -447,9 +498,33 @@ const StudentDashboard = () => {
                       <span className="text-xs font-bold text-primary">NEW</span>
                     )}
                   </div>
-                  <p className="text-sm whitespace-pre-wrap">{response.message}</p>
+                  <p className="text-sm whitespace-pre-wrap mb-3">{messageText}</p>
+                  
+                  <div className="pt-2 border-t border-border">
+                    {replyingToMessageId === response.id ? (
+                      <div className="space-y-2 mt-2" onClick={(e) => e.stopPropagation()}>
+                        <Textarea 
+                          value={studentReplyText}
+                          onChange={(e) => setStudentReplyText(e.target.value)}
+                          placeholder="Type your reply here..."
+                          className="min-h-[60px] text-sm"
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => handleSendStudentReply(linkedReportId, response.id)} disabled={sendingStudentReply || !studentReplyText.trim()}>
+                            {sendingStudentReply ? "Sending..." : "Send Reply"}
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => { setReplyingToMessageId(null); setStudentReplyText(""); }}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button size="sm" variant="ghost" className="text-xs h-8 px-2" onClick={(e) => { e.stopPropagation(); setReplyingToMessageId(response.id); }}>
+                        <Reply className="w-3 h-3 mr-1" />
+                        Reply
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              ))
+              )})
             )}
           </div>
           <Button onClick={() => setShowResponsesDialog(false)} className="w-full">

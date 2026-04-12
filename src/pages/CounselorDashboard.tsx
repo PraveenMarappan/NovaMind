@@ -24,6 +24,7 @@ interface Report {
   priority: string;
   created_at: string;
   user_id: string;
+  studentReplies?: any[];
 }
 
 const CounselorDashboard = () => {
@@ -111,13 +112,48 @@ const CounselorDashboard = () => {
         variant: "destructive",
       });
     } else {
-      const processedData = (data || []).map((report: any) => {
-        if (!report.priority || report.risk_score === undefined || report.risk_score === null) {
+      const allData = data || [];
+      const studentReplies: any[] = [];
+      const mainReports: any[] = [];
+
+      allData.forEach((r: any) => {
+        try {
+          const parsed = JSON.parse(r.content);
+          if (parsed && typeof parsed === 'object' && parsed.type === "student_reply") {
+            studentReplies.push({ ...r, _replyData: parsed });
+            return;
+          }
+        } catch (e) {
+          // not json, normal report
+        }
+        mainReports.push(r);
+      });
+
+      const userLatestReportId = new Map();
+      [...mainReports].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).forEach(r => {
+        if (!userLatestReportId.has(r.user_id)) {
+           userLatestReportId.set(r.user_id, r.id);
+        }
+      });
+
+      const processedData = mainReports.map((report: any) => {
+        const isLatest = userLatestReportId.get(report.user_id) === report.id;
+        let riskScoreVal = report.risk_score;
+        let priorityVal = report.priority;
+
+        if (!priorityVal || riskScoreVal === undefined || riskScoreVal === null) {
           const { riskScore, priority } = analyzeRisk(report.content);
           supabase.from("reports").update({ priority, risk_score: riskScore }).eq("id", report.id).then();
-          return { ...report, priority, risk_score: riskScore };
+          riskScoreVal = riskScore;
+          priorityVal = priority;
         }
-        return report;
+
+        const repliesForThis = studentReplies.filter(sr => 
+            sr._replyData.reportId === report.id || 
+            (sr._replyData.reportId === "legacy" && sr.user_id === report.user_id && isLatest)
+        );
+
+        return { ...report, priority: priorityVal, risk_score: riskScoreVal, studentReplies: repliesForThis };
       });
 
       const getRank = (report: any) => {
@@ -181,12 +217,17 @@ const CounselorDashboard = () => {
 
     setSendingReply(true);
 
+    const payload = JSON.stringify({ 
+      text: validation.data.message, 
+      reportId: report.id 
+    });
+
     const { error } = await supabase
       .from("counselor_responses")
       .insert({
         student_id: report.user_id,
         counselor_id: user.id,
-        message: validation.data.message
+        message: payload
       });
 
     if (error) {
@@ -396,6 +437,25 @@ const CounselorDashboard = () => {
                             Mark Resolved
                           </Button>
                         )}
+                      </div>
+                    )}
+                    
+                    {report.studentReplies && report.studentReplies.length > 0 && (
+                      <div className="ml-6 mt-6 space-y-2 border-l-2 border-primary/30 pl-4">
+                        <h4 className="text-xs font-semibold text-muted-foreground uppercase flex items-center gap-1 mb-3">
+                          <Reply className="w-3 h-3" />
+                          Student Replies
+                        </h4>
+                        {report.studentReplies
+                          .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+                          .map((sr: any) => (
+                            <div key={sr.id} className="p-3 bg-muted/40 rounded-lg">
+                              <p className="text-sm whitespace-pre-wrap">{sr._replyData.text}</p>
+                              <span className="text-xs text-muted-foreground mt-1 block">
+                                {new Date(sr.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                        ))}
                       </div>
                     )}
                   </div>

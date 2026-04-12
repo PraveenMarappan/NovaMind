@@ -15,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { analyzeRisk } from "@/lib/riskScoring";
 import { z } from "zod";
 
 const reportSchema = z.object({
@@ -150,13 +151,16 @@ const StudentDashboard = () => {
 
     setLoading(true);
     
+    const { riskScore, priority } = analyzeRisk(validation.data.content);
+    
     const { error } = await supabase
       .from("reports")
       .insert({
         user_id: user.id,
         content: validation.data.content,
         status: "pending",
-        priority: "normal"
+        priority: priority,
+        risk_score: riskScore
       });
 
     if (error) {

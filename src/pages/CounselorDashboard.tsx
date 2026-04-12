@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Brain, LogOut, AlertTriangle, TrendingUp, Users, Activity, Reply } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import { Textarea } from "@/components/ui/textarea";
+import { analyzeRisk } from "@/lib/riskScoring";
 import { z } from "zod";
 
 const replySchema = z.object({
@@ -101,8 +102,7 @@ const CounselorDashboard = () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("reports")
-      .select("id, content, status, priority, created_at, user_id")
-      .order("created_at", { ascending: false });
+      .select("*");
 
     if (error) {
       toast({
@@ -111,7 +111,35 @@ const CounselorDashboard = () => {
         variant: "destructive",
       });
     } else {
-      setReports(data || []);
+      const processedData = (data || []).map((report: any) => {
+        if (!report.priority || report.risk_score === undefined || report.risk_score === null) {
+          const { riskScore, priority } = analyzeRisk(report.content);
+          supabase.from("reports").update({ priority, risk_score: riskScore }).eq("id", report.id).then();
+          return { ...report, priority, risk_score: riskScore };
+        }
+        return report;
+      });
+
+      const getRank = (report: any) => {
+        const isResolved = report.status === "resolved";
+        const isHigh = report.priority === "high";
+
+        if (!isResolved && isHigh) return 1;
+        if (!isResolved && !isHigh) return 2;
+        if (isResolved && isHigh) return 3;
+        return 4;
+      };
+
+      processedData.sort((a, b) => {
+        const rankA = getRank(a);
+        const rankB = getRank(b);
+
+        if (rankA !== rankB) return rankA - rankB;
+
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+
+      setReports(processedData as Report[]);
     }
     setLoading(false);
   };
@@ -292,6 +320,13 @@ const CounselorDashboard = () => {
                           "bg-accent/20 text-accent"
                         }`}>
                           {report.status}
+                        </span>
+                        <span className={`text-xs px-2 py-1 rounded-full border ${
+                          report.priority === "high" 
+                            ? "bg-destructive/10 text-destructive border-destructive/20 font-semibold" 
+                            : "bg-muted text-muted-foreground border-transparent"
+                        }`}>
+                          {report.priority === "high" ? "High Priority" : "Normal"}
                         </span>
                       </div>
                       <span className="text-xs text-muted-foreground">
